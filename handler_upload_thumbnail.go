@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -43,8 +46,24 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	fileType := header.Header.Get("Content-Type")
+	splitFileType := strings.Split(fileType, "/")
+	if len(splitFileType) != 2 {
+		respondWithError(w, http.StatusBadRequest, "Couldn't determine content type", err)
+		return
+	}
+	ext := "." + splitFileType[1]
+	filePath := filepath.Join(cfg.assetsRoot, videoIDString + ext)
+	path, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error creating file", err)
+		return
+	}
 
-	fileData, err := io.ReadAll(file)
+	_, err = io.Copy(path, file)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Couldn't copy file", err)
+		return
+	}
 
 	videoMetadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -56,12 +75,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnails[videoID] = thumbnail{
-		data: fileData,
-		mediaType: fileType,
-	}
+	thumbnailURL := fmt.Sprintf("https://cuddly-goldfish-wrwr7w5qg5vh9vpp-%s.app.github.dev/assets/%s%s", cfg.port, videoIDString, ext)
 
-	*videoMetadata.ThumbnailURL = fmt.Sprintf("http://localhost:<port>/api/thumbnails/%s", videoIDString)
+	videoMetadata.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video metadata", err)
