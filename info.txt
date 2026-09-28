@@ -1,3 +1,6 @@
 Tubley credentials for course:
 Email: admin@tubely.com
 Password: password
+
+To avoid version errors, run program with:
+/usr/local/go/bin/go run .

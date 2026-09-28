@@ -6,26 +6,34 @@ import (
 	"os"
 	"net/http"
 	"path/filepath"
-	"strings"
+	"mime"
+	"crypto/rand"
+	"encoding/base64"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
+	randBytes := make([]byte, 32)
+	_, err := rand.Read(randBytes)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random bytes", err)
+		return
+	}
+	thumbnailURLString := base64.RawURLEncoding.EncodeToString(randBytes)
+	
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
 		return
 	}
-
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
 		return
 	}
-
 	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
@@ -45,14 +53,19 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse thumbnail request", err)
 		return
 	}
-	fileType := header.Header.Get("Content-Type")
-	splitFileType := strings.Split(fileType, "/")
-	if len(splitFileType) != 2 {
-		respondWithError(w, http.StatusBadRequest, "Couldn't determine content type", err)
+
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Couldn't parse media type", err)
 		return
 	}
-	ext := "." + splitFileType[1]
-	filePath := filepath.Join(cfg.assetsRoot, videoIDString + ext)
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "only jpeg or png media types are accepted", err)
+		return
+	}
+	ext, err := mime.ExtensionsByType(mediaType)
+
+	filePath := filepath.Join(cfg.assetsRoot, thumbnailURLString + ext[0])
 	path, err := os.Create(filePath)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Error creating file", err)
@@ -75,8 +88,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	thumbnailURL := fmt.Sprintf("https://cuddly-goldfish-wrwr7w5qg5vh9vpp-%s.app.github.dev/assets/%s%s", cfg.port, videoIDString, ext)
-
+	thumbnailURL := fmt.Sprintf("https://cuddly-goldfish-wrwr7w5qg5vh9vpp-%s.app.github.dev/assets/%s%s", cfg.port, thumbnailURLString, ext[0])
+	//if testing is failing due to cloudspace proxy behaviour, switch to the below url generation scheme
+	//thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s%s", cfg.port, videoIDString, ext[0])
 	videoMetadata.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
