@@ -40,7 +40,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	const maxMemory = 10 << 20
+	const maxMemory = 10 << 20 // 10 MB
 
 	err = r.ParseMultipartForm(maxMemory)
 	if err != nil {
@@ -53,6 +53,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse thumbnail request", err)
 		return
 	}
+	defer file.Close()
 
 	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
@@ -68,13 +69,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	filePath := filepath.Join(cfg.assetsRoot, thumbnailURLString + ext[0])
 	path, err := os.Create(filePath)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Error creating file", err)
+		respondWithError(w, http.StatusInternalServerError, "Error creating file", err)
 		return
 	}
 
 	_, err = io.Copy(path, file)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't copy file", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't copy file", err)
 		return
 	}
 
