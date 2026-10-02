@@ -34,6 +34,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
 		return
 	}
+	const maxMemory = 1 << 30 // 1 GB
+
+	err = r.ParseMultipartForm(maxMemory)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Coudln't parse body request", err)
+		return
+	}
 
 	videoMetadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -74,16 +81,36 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	f, err := os.CreateTemp("", "tubely-upload.mp4")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "couldn't create temporary video file", err)
+		return
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-
+	
 	_, err = io.Copy(f, file)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't copy file", err)
 		return
 	}
- 	f.Seek(0, io.SeekStart)
+ 	_, err = f.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't seek on file", err)
+		return
+	}
+	
+	aspectRatio, err := getVideoAspectRatio(f.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "couldn't determine aspect ratio", err)
+		return
+	}
+	ratioLabel := ""
+	if aspectRatio == "16:9" {
+		ratioLabel = "landscape"
+	} else if aspectRatio == "9:16" {
+		ratioLabel = "portrait"
+	} else {
+		ratioLabel = aspectRatio
+	}
+	videoKeyString = ratioLabel + "/" + videoKeyString
 
 	s3Params := s3.PutObjectInput{
 		Bucket:		 &cfg.s3Bucket,
