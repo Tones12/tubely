@@ -16,7 +16,8 @@ import (
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
-	http.MaxBytesReader(w, r.Body, 1 << 30)
+	const maxVideoSize = 1 << 30 // 1 GB
+	r.Body = http.MaxBytesReader(w, r.Body, maxVideoSize)
 
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
@@ -34,20 +35,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
 		return
 	}
-	const maxMemory = 1 << 30 // 1 GB
 
-	err = r.ParseMultipartForm(maxMemory)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Coudln't parse body request", err)
-		return
-	}
-
-	videoMetadata, err := cfg.db.GetVideo(videoID)
+	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find video", err)
 		return
 	}
-	if videoMetadata.CreateVideoParams.UserID != userID {
+	if video.CreateVideoParams.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "Invalid userID", nil)
 		return
 	}
@@ -103,13 +97,29 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ratioLabel := ""
-	if aspectRatio == "16:9" {
+	switch aspectRatio {
+	case "16:9":
 		ratioLabel = "landscape"
-	} else if aspectRatio == "9:16" {
+	case "9:16":
 		ratioLabel = "portrait"
-	} else {
+	default:
 		ratioLabel = aspectRatio
 	}
+
+	processedPath, err := processVideoForFastStart(f.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "couldn't process for fast start", err)
+		return
+	}
+	f, err = os.Open(processedPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "couldn't create temporary video file", err)
+		return
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+
 	videoKeyString = ratioLabel + "/" + videoKeyString
 
 	s3Params := s3.PutObjectInput{
@@ -125,11 +135,14 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, videoKeyString)
-	videoMetadata.VideoURL = &videoURL
-	err = cfg.db.UpdateVideo(videoMetadata)
+	videoURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, videoKeyString)
+	video.VideoURL = &videoURL
+	
+	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video metadata", err)
 		return
 	}
+	
+	respondWithJSON(w, http.StatusOK, video)
 }
